@@ -5,7 +5,6 @@ import { Card } from "@/components/ui/card";
 import { Briefcase, Sparkles, TrendingUp, Upload } from "lucide-react";
 import { AnalysisResults } from "@/components/AnalysisResults";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import * as pdfjsLib from 'pdfjs-dist';
 
@@ -70,22 +69,77 @@ const Index = () => {
     }
 
     setIsAnalyzing(true);
-    
+
     try {
-      const { data, error } = await supabase.functions.invoke('analyze-resume', {
-        body: { 
+      // Get Supabase URL and key from the client
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        toast.error("Supabase is not configured. Please check your environment variables.");
+        return;
+      }
+
+      // Call the Edge Function directly using fetch for better error handling
+      const response = await fetch(`${supabaseUrl}/functions/v1/analyze-resume`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({
           jobDescription,
           resume
-        }
+        })
       });
 
-      if (error) throw error;
+      const responseData = await response.json();
 
-      setAnalysisResults(data);
+      if (!response.ok) {
+        // Extract error message from response
+        const errorMessage = responseData?.error || `HTTP ${response.status}: ${response.statusText}`;
+        console.error("Edge Function error:", errorMessage);
+        console.error("Full response:", responseData);
+
+        // Provide specific error messages
+        if (errorMessage.includes('GOOGLE_GEMINI_API_KEY not configured')) {
+          toast.error("API key not configured. Please set GOOGLE_GEMINI_API_KEY in Supabase Edge Function secrets.");
+        } else if (errorMessage.includes('Missing required fields')) {
+          toast.error("Please fill in both job description and resume.");
+        } else if (errorMessage.includes('Google Gemini API error')) {
+          toast.error(`AI service error: ${errorMessage}`);
+        } else if (errorMessage.includes('Failed to parse AI response')) {
+          toast.error("The AI returned an invalid response. Please try again.");
+        } else {
+          toast.error(`Analysis failed: ${errorMessage}`);
+        }
+        return;
+      }
+
+      // Check if response contains an error field
+      if (responseData && typeof responseData === 'object' && 'error' in responseData) {
+        toast.error(`Analysis failed: ${responseData.error}`);
+        return;
+      }
+
+      if (!responseData) {
+        toast.error("No analysis results received. Please try again.");
+        return;
+      }
+
+      setAnalysisResults(responseData);
       toast.success("Analysis complete!");
     } catch (error) {
       console.error("Analysis error:", error);
-      toast.error("Failed to analyze. Please try again.");
+
+      // Provide user-friendly error messages based on error type
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        toast.error("Network error: Unable to reach the analysis service. Please check your connection and try again.");
+      } else if (error instanceof Error) {
+        toast.error(`Error: ${error.message}`);
+      } else {
+        toast.error("An unexpected error occurred. Please try again.");
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -193,3 +247,4 @@ const Index = () => {
 };
 
 export default Index;
+

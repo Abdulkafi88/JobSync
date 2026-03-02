@@ -12,102 +12,148 @@ serve(async (req) => {
 
   try {
     const { jobDescription, resume } = await req.json();
-    
+
     if (!jobDescription || !resume) {
       throw new Error('Missing required fields');
     }
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY');
+    if (!GROQ_API_KEY) {
+      throw new Error('GROQ_API_KEY not configured');
     }
 
-    console.log('Analyzing resume with AI...');
+    console.log('Analyzing resume with Groq AI...');
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'system',
-            content: `You are an expert resume analyzer and career coach. Analyze job descriptions and resumes to provide actionable insights.
+    const prompt = `You are an expert resume coach and career advisor. Carefully analyze the job description and the candidate's resume below, then return a detailed JSON response.
 
-Your task:
-1. Calculate a match score (0-100) based on how well the resume matches the job description
-2. Extract key skills from the job description that the candidate has
-3. Provide 3-5 specific, actionable improvement suggestions
-4. Identify missing keywords/skills from the job description
+Job Description:
+${jobDescription}
 
-Return ONLY a valid JSON object with this exact structure (no markdown, no extra text):
+Candidate Resume:
+${resume}
+
+Instructions:
+- matchScore: Score STRICTLY based on how many job requirements the resume actually meets. Use this scale:
+  0-10 = Resume has almost nothing relevant to the job
+  11-25 = Resume has 1-2 keywords but is clearly unqualified
+  26-40 = Resume has some related experience but missing most key requirements
+  41-55 = Resume meets roughly half the requirements
+  56-70 = Resume is a decent match but missing important skills
+  71-85 = Resume meets most requirements with minor gaps
+  86-100 = Resume is an excellent match for the role
+  Be STRICT. Do not be generous. A resume with only 1-2 matching skills out of 10 required should score below 20.
+- keySkills: List specific skills and qualifications from the resume that match the job description.
+- missingKeywords: List important skills, tools, technologies, or qualifications mentioned in the job description that are missing or not clearly shown in the resume.
+- improvements: Give 5-8 specific, actionable tips the candidate should use to improve their resume for this exact job. Be specific — mention actual skills, keywords, or sections they should add or change. Do NOT give generic advice.
+
+You MUST respond with ONLY a valid JSON object in this exact format, no extra text:
 {
   "matchScore": <number 0-100>,
-  "keySkills": ["skill1", "skill2", ...],
-  "improvements": ["improvement1", "improvement2", ...],
-  "missingKeywords": ["keyword1", "keyword2", ...]
-}`
-          },
-          {
-            role: 'user',
-            content: `Job Description:\n${jobDescription}\n\nResume/Skills:\n${resume}`
-          }
-        ]
+  "keySkills": ["skill1", "skill2"],
+  "missingKeywords": ["keyword1", "keyword2"],
+  "improvements": ["tip1", "tip2"]
+}`;
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 2048,
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI API error:', response.status, errorText);
-      throw new Error(`AI API error: ${response.status}`);
+      console.error('Groq API error:', response.status, errorText);
+      let errorMessage = `Groq API error: ${response.status}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.error?.message) {
+          errorMessage = `Groq API error: ${errorJson.error.message}`;
+        }
+      } catch {
+        if (errorText) {
+          errorMessage = `Groq API error: ${errorText.substring(0, 200)}`;
+        }
+      }
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();
     const aiResponse = data.choices?.[0]?.message?.content;
-    
+
     if (!aiResponse) {
       throw new Error('No response from AI');
     }
 
     console.log('AI response received, parsing...');
-    
+
     // Clean up the response - remove markdown code blocks if present
     let cleanedResponse = aiResponse.trim();
     if (cleanedResponse.startsWith('```json')) {
-      cleanedResponse = cleanedResponse.replace(/^```json\n/, '').replace(/\n```$/, '');
+      cleanedResponse = cleanedResponse.replace(/^```json\n?/, '').replace(/\n?```$/, '');
     } else if (cleanedResponse.startsWith('```')) {
-      cleanedResponse = cleanedResponse.replace(/^```\n/, '').replace(/\n```$/, '');
+      cleanedResponse = cleanedResponse.replace(/^```\n?/, '').replace(/\n?```$/, '');
     }
-    
+
+    // Try to extract JSON if it's embedded in other text
+    const jsonMatch = cleanedResponse.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      cleanedResponse = jsonMatch[0];
+    }
+
     // Parse the JSON response
-    const analysisResults = JSON.parse(cleanedResponse);
-    
-    console.log('Analysis complete:', analysisResults);
+    let analysisResults;
+    try {
+      analysisResults = JSON.parse(cleanedResponse);
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError);
+      console.error('Response text:', cleanedResponse);
+      throw new Error(`Failed to parse AI response as JSON: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+    }
+
+    // Validate the response structure
+    if (!analysisResults || typeof analysisResults !== 'object') {
+      throw new Error('Invalid response structure from AI');
+    }
+
+    // Ensure all required fields exist with proper defaults
+    const validatedResults = {
+      matchScore: typeof analysisResults.matchScore === 'number' ? analysisResults.matchScore : 0,
+      keySkills: Array.isArray(analysisResults.keySkills) ? analysisResults.keySkills : [],
+      improvements: Array.isArray(analysisResults.improvements) ? analysisResults.improvements : [],
+      missingKeywords: Array.isArray(analysisResults.missingKeywords) ? analysisResults.missingKeywords : []
+    };
+
+    console.log('Analysis complete:', validatedResults);
 
     return new Response(
-      JSON.stringify(analysisResults),
-      { 
-        headers: { 
-          ...corsHeaders, 
-          'Content-Type': 'application/json' 
-        } 
+      JSON.stringify(validatedResults),
+      {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
       }
     );
   } catch (error) {
     console.error('Error in analyze-resume function:', error);
-    
+
     return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error occurred' 
+      JSON.stringify({
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
       }),
       {
         status: 500,
-        headers: { 
-          ...corsHeaders, 
-          'Content-Type': 'application/json' 
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
         },
       }
     );

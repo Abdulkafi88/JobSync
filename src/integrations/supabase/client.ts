@@ -13,15 +13,22 @@ const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY a
 let client: ReturnType<typeof createClient<Database>> | { functions: { invoke: (...args: any[]) => Promise<never> } };
 
 if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-  console.warn('[Supabase] VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY is missing. The Analyze feature will be disabled until these are provided at build time.');
+  console.error('[Supabase] Configuration Error:');
+  console.error('  VITE_SUPABASE_URL:', SUPABASE_URL ? '✓ Set' : '✗ Missing');
+  console.error('  VITE_SUPABASE_PUBLISHABLE_KEY:', SUPABASE_PUBLISHABLE_KEY ? '✓ Set' : '✗ Missing');
+  console.error('  Please set these environment variables in your .env file and rebuild the application.');
+
   client = {
     functions: {
       async invoke() {
-        throw new Error('Supabase environment variables are missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY and rebuild.');
+        throw new Error('Supabase is not configured. Please check the browser console for details and contact the site administrator.');
       },
     },
   } as any;
 } else {
+  console.log('[Supabase] Successfully initialized');
+  console.log('  Project URL:', SUPABASE_URL);
+
   client = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
       storage: localStorage,
