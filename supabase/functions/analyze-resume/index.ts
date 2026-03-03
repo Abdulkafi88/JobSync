@@ -1,9 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': 'https://abdulkafi88.github.io',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Known user-facing errors that are safe to show
+const USER_FACING_ERRORS = [
+  'Missing required fields',
+  'Input is too long',
+  'Please fill in both',
+];
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -15,6 +22,11 @@ serve(async (req) => {
 
     if (!jobDescription || !resume) {
       throw new Error('Missing required fields');
+    }
+
+    // Prevent oversized payloads (DoS protection)
+    if (jobDescription.length > 15000 || resume.length > 20000) {
+      throw new Error('Input is too long. Please shorten your text and try again.');
     }
 
     const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY');
@@ -71,18 +83,7 @@ You MUST respond with ONLY a valid JSON object in this exact format, no extra te
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Groq API error:', response.status, errorText);
-      let errorMessage = `Groq API error: ${response.status}`;
-      try {
-        const errorJson = JSON.parse(errorText);
-        if (errorJson.error?.message) {
-          errorMessage = `Groq API error: ${errorJson.error.message}`;
-        }
-      } catch {
-        if (errorText) {
-          errorMessage = `Groq API error: ${errorText.substring(0, 200)}`;
-        }
-      }
-      throw new Error(errorMessage);
+      throw new Error('AI service error. Please try again.');
     }
 
     const data = await response.json();
@@ -115,12 +116,12 @@ You MUST respond with ONLY a valid JSON object in this exact format, no extra te
     } catch (parseError) {
       console.error('JSON parse error:', parseError);
       console.error('Response text:', cleanedResponse);
-      throw new Error(`Failed to parse AI response as JSON: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+      throw new Error('Failed to parse AI response. Please try again.');
     }
 
     // Validate the response structure
     if (!analysisResults || typeof analysisResults !== 'object') {
-      throw new Error('Invalid response structure from AI');
+      throw new Error('Invalid response from AI. Please try again.');
     }
 
     // Ensure all required fields exist with proper defaults
@@ -143,12 +144,15 @@ You MUST respond with ONLY a valid JSON object in this exact format, no extra te
       }
     );
   } catch (error) {
-    console.error('Error in analyze-resume function:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Error in analyze-resume function:', message);
+
+    // Only show safe user-facing messages — hide internal system errors
+    const isUserFacing = USER_FACING_ERRORS.some(e => message.includes(e));
+    const clientMessage = isUserFacing ? message : 'Analysis failed. Please try again.';
 
     return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      }),
+      JSON.stringify({ error: clientMessage }),
       {
         status: 500,
         headers: {
