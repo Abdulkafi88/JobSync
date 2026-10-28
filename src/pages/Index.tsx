@@ -7,8 +7,8 @@ import { AnalysisResults } from "@/components/AnalysisResults";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import * as pdfjsLib from 'pdfjs-dist';
+import { supabase } from "@/integrations/supabase/client";
 
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY as string | undefined;
 
 interface AnalysisData {
   matchScore: number;
@@ -70,11 +70,6 @@ const Index = () => {
       return;
     }
 
-    if (!GROQ_API_KEY) {
-      toast.error("Groq API key is not configured.");
-      return;
-    }
-
     if (jobDescription.length > 15000 || resume.length > 20000) {
       toast.error("Input is too long. Please shorten your text and try again.");
       return;
@@ -82,94 +77,34 @@ const Index = () => {
 
     setIsAnalyzing(true);
 
-    const prompt = `You are an expert resume coach and career advisor. Carefully analyze the job description and the candidate's resume below, then return a detailed JSON response.
-
-Job Description:
-${jobDescription}
-
-Candidate Resume:
-${resume}
-
-Instructions:
-- matchScore: Score STRICTLY based on how many job requirements the resume actually meets. Use this scale:
-  0-10 = Resume has almost nothing relevant to the job
-  11-25 = Resume has 1-2 keywords but is clearly unqualified
-  26-40 = Resume has some related experience but missing most key requirements
-  41-55 = Resume meets roughly half the requirements
-  56-70 = Resume is a decent match but missing important skills
-  71-85 = Resume meets most requirements with minor gaps
-  86-100 = Resume is an excellent match for the role
-  Be STRICT. Do not be generous. A resume with only 1-2 matching skills out of 10 required should score below 20.
-- keySkills: List specific skills and qualifications from the resume that match the job description.
-- missingKeywords: List important skills, tools, technologies, or qualifications mentioned in the job description that are missing or not clearly shown in the resume.
-- improvements: Give 5-8 specific, actionable tips the candidate should use to improve their resume for this exact job. Be specific — mention actual skills, keywords, or sections they should add or change. Do NOT give generic advice.
-
-You MUST respond with ONLY a valid JSON object in this exact format, no extra text:
-{
-  "matchScore": <number 0-100>,
-  "keySkills": ["skill1", "skill2"],
-  "missingKeywords": ["keyword1", "keyword2"],
-  "improvements": ["tip1", "tip2"]
-}`;
-
     try {
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.2,
-          max_tokens: 2048,
-        }),
+      // The Groq key lives only on the server (Supabase Edge Function), never in the browser.
+      const { data, error } = await supabase.functions.invoke('analyze-resume', {
+        body: { jobDescription, resume },
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Groq API error:', response.status, errorText);
-        toast.error("AI service error. Please try again.");
+      if (error) {
+        let message = "Analysis failed. Please try again.";
+        try {
+          const body = await (error as any).context?.json?.();
+          if (body?.error) message = body.error;
+        } catch {
+          // keep the generic message
+        }
+        toast.error(message);
         return;
       }
 
-      const data = await response.json();
-      const aiResponse = data.choices?.[0]?.message?.content;
-
-      if (!aiResponse) {
-        toast.error("No response from AI. Please try again.");
+      if (!data || typeof data.matchScore !== 'number') {
+        toast.error("Invalid response from the analysis service. Please try again.");
         return;
       }
 
-      let cleaned = aiResponse.trim()
-        .replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '');
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      if (jsonMatch) cleaned = jsonMatch[0];
-
-      let analysisResults: AnalysisData;
-      try {
-        const parsed = JSON.parse(cleaned);
-        analysisResults = {
-          matchScore: typeof parsed.matchScore === 'number' ? parsed.matchScore : 0,
-          keySkills: Array.isArray(parsed.keySkills) ? parsed.keySkills : [],
-          improvements: Array.isArray(parsed.improvements) ? parsed.improvements : [],
-          missingKeywords: Array.isArray(parsed.missingKeywords) ? parsed.missingKeywords : [],
-        };
-      } catch {
-        toast.error("Failed to parse AI response. Please try again.");
-        return;
-      }
-
-      setAnalysisResults(analysisResults);
+      setAnalysisResults(data as AnalysisData);
       toast.success("Analysis complete!");
     } catch (error) {
       console.error("Analysis error:", error);
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        toast.error("Network error. Please check your connection and try again.");
-      } else {
-        toast.error("An unexpected error occurred. Please try again.");
-      }
+      toast.error("Could not reach the analysis service. Please try again.");
     } finally {
       setIsAnalyzing(false);
     }

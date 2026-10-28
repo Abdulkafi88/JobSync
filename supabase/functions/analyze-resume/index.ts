@@ -1,9 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': 'https://abdulkafi88.github.io',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+// Only the live site and local dev servers may call this function.
+const ALLOWED_ORIGINS = ['https://abdulkafi88.github.io'];
+const LOCAL_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+function corsHeadersFor(req: Request) {
+  const origin = req.headers.get('Origin') ?? '';
+  const allowed = ALLOWED_ORIGINS.includes(origin) || LOCAL_ORIGIN.test(origin);
+  return {
+    'Access-Control-Allow-Origin': allowed ? origin : ALLOWED_ORIGINS[0],
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Vary': 'Origin',
+  };
+}
 
 // Known user-facing errors that are safe to show
 const USER_FACING_ERRORS = [
@@ -13,6 +22,8 @@ const USER_FACING_ERRORS = [
 ];
 
 serve(async (req) => {
+  const corsHeaders = corsHeadersFor(req);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -73,10 +84,13 @@ You MUST respond with ONLY a valid JSON object in this exact format, no extra te
         'Authorization': `Bearer ${GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        // llama-3.3-70b-versatile was shut down by Groq on 2026-08-16
+        model: 'openai/gpt-oss-120b',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.2,
-        max_tokens: 2048,
+        reasoning_effort: 'low',
+        response_format: { type: 'json_object' },
+        max_tokens: 4096,
       }),
     });
 
