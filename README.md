@@ -1,62 +1,63 @@
-# Welcome to your JobSync project
+# JobSync
 
-## Project info
+**AI resume analyzer that compares your resume to a job posting, scores the match, and tells you exactly what to improve.**
 
+🔗 **Live demo:** https://abdulkafi88.github.io/JobSync/
 
-## How can I edit this code?
+## Features
 
+- **Paste or upload:** paste a job description and your resume, or upload your resume as a PDF (text is extracted in the browser)
+- **Match score:** a strict 0–100 score based on how many of the job's requirements your resume meets
+- **Matching skills:** the skills and qualifications from your resume that fit the role
+- **Missing keywords:** important skills and tools from the posting that your resume doesn't show
+- **Tailored tips:** 5–8 specific, actionable suggestions for improving your resume for that exact job
 
+## How it works
 
+```
+Browser (React)  ──►  Supabase Edge Function  ──►  Groq API (gpt-oss-120b)
+   job + resume          holds the API key           returns JSON analysis
+```
 
+The browser never sees the Groq API key. Requests go through a Supabase Edge Function (`supabase/functions/analyze-resume`) that holds the key, validates input size, restricts which sites can call it (CORS), and checks the AI's response before returning it.
 
-**Use your preferred IDE**
+## Tech stack
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+- **Frontend:** React, TypeScript, Vite, Tailwind CSS, shadcn/ui
+- **PDF parsing:** pdf.js
+- **Backend:** Supabase Edge Functions (Deno)
+- **AI:** Groq API (`openai/gpt-oss-120b`)
+- **Hosting:** GitHub Pages, deployed with GitHub Actions
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+## Running locally
 
-Follow these steps:
+Requires Node.js 20+.
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+git clone https://github.com/Abdulkafi88/JobSync.git
+cd JobSync
+npm install
+cp .env.example .env   # then fill in your Supabase values
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+### Environment variables
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+| Variable | Where it goes | Description |
+| --- | --- | --- |
+| `VITE_SUPABASE_URL` | `.env` / GitHub secret | Your Supabase project URL |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | `.env` / GitHub secret | Supabase publishable key (safe to expose) |
+| `GROQ_API_KEY` | Supabase function secret | Groq API key; never put this in `.env` |
 
-**Use GitHub Codespaces**
+### Deploying the Edge Function
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```sh
+supabase login
+supabase link --project-ref <your-project-id>
+supabase secrets set GROQ_API_KEY=<your-groq-key>
+supabase functions deploy analyze-resume --no-verify-jwt
+```
 
-## What technologies are used for this project?
+## Deployment
 
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-
-
-
-
-
+Pushing to `main` triggers the GitHub Actions workflow in `.github/workflows/deploy.yml`, which builds the site and publishes it to GitHub Pages.
